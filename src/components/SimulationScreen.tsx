@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSimulationStore } from '../store/simulationStore';
-import { Play, Pause, RotateCcw, ArrowLeft, Eye, Award, Frown, Compass, ShieldAlert } from 'lucide-react';
+import { Play, Pause, RotateCcw, ArrowLeft, Eye, Award, Frown, Compass, ShieldAlert, ZoomIn, ZoomOut, Maximize2, Target } from 'lucide-react';
 import { AgentHelper } from '../core/Agent';
 
 interface SimulationScreenProps {
@@ -9,6 +9,14 @@ interface SimulationScreenProps {
 
 export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetup }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // États pour le Zoom et le Panoramique
+  const [zoom, setZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [followAgent, setFollowAgent] = useState(true);
+  const [isPanning, setIsPanning] = useState(false);
+  const hasPagedRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0 });
   
   const {
     config,
@@ -26,6 +34,28 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
     setSpeed,
     setSelectedAgentId
   } = useSimulationStore();
+
+  const selectedAgent = agents.find(a => a.id === selectedAgentId);
+
+  // S'assurer que si l'agent suivi meurt, disparaît ou est désélectionné sans interaction,
+  // on fige la caméra sur sa dernière position connue
+  const prevSelectedAgentRef = useRef<{ x: number, y: number } | null>(null);
+
+  useEffect(() => {
+    if (selectedAgent) {
+      prevSelectedAgentRef.current = { x: selectedAgent.x, y: selectedAgent.y };
+    }
+  }, [selectedAgent]);
+
+  useEffect(() => {
+    if (followAgent && !selectedAgent && prevSelectedAgentRef.current) {
+      setPanOffset({
+        x: prevSelectedAgentRef.current.x - config.width / 2,
+        y: prevSelectedAgentRef.current.y - config.height / 2
+      });
+      setFollowAgent(false);
+    }
+  }, [selectedAgent, followAgent, config.width, config.height]);
 
   // Boucle d'animation principale (requestAnimationFrame)
   useEffect(() => {
@@ -48,7 +78,35 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
     return () => cancelAnimationFrame(frameId);
   }, [isRunning, step]);
 
-  // Rendu du Canvas
+  // Écouteur natif wheel pour le zoom par molette sans défilement de page
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleCanvasWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomFactor = 1.1;
+      setZoom(prevZoom => {
+        let newZoom;
+        if (e.deltaY < 0) {
+          newZoom = Math.min(6, prevZoom * zoomFactor);
+        } else {
+          newZoom = Math.max(1, prevZoom / zoomFactor);
+        }
+        if (newZoom === 1) {
+          setPanOffset({ x: 0, y: 0 });
+        }
+        return newZoom;
+      });
+    };
+
+    canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
+    return () => {
+      canvas.removeEventListener('wheel', handleCanvasWheel);
+    };
+  }, []);
+
+  // Rendu du Canvas avec Zoom et Panoramique
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -56,24 +114,35 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Effacer le canvas
+    // Effacer le canvas (fond solide)
     ctx.fillStyle = '#0f172a'; // Deep background slate
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Dessiner une grille d'arrière-plan (effet radar/simulation premium)
+    // Calculer le centre de la caméra (viewCenter)
+    const viewCenterX = (followAgent && selectedAgent) ? selectedAgent.x : (config.width / 2 + panOffset.x);
+    const viewCenterY = (followAgent && selectedAgent) ? selectedAgent.y : (config.height / 2 + panOffset.y);
+
+    ctx.save();
+
+    // Appliquer les transformations de caméra
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-viewCenterX, -viewCenterY);
+
+    // Dessiner une grille d'arrière-plan dans l'espace de simulation
     ctx.strokeStyle = 'rgba(51, 65, 85, 0.2)';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 / zoom;
     const gridSize = 40;
-    for (let x = 0; x < canvas.width; x += gridSize) {
+    for (let x = 0; x < config.width; x += gridSize) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
+      ctx.lineTo(x, config.height);
       ctx.stroke();
     }
-    for (let y = 0; y < canvas.height; y += gridSize) {
+    for (let y = 0; y < config.height; y += gridSize) {
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
+      ctx.lineTo(config.width, y);
       ctx.stroke();
     }
 
@@ -94,14 +163,14 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
 
       // Bordure fine
       ctx.strokeStyle = 'rgba(96, 165, 250, 0.6)';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 / zoom;
       ctx.stroke();
 
       // Texte de quantité
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '9px monospace';
+      ctx.font = `${Math.max(6, 9 / zoom)}px monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText(`${Math.round(water.quantity)}`, water.x, water.y - radius - 4);
+      ctx.fillText(`${Math.round(water.quantity)}`, water.x, water.y - radius - 4 / zoom);
     }
 
     // 2. Dessiner les points de NOURRITURE
@@ -129,37 +198,34 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
       ctx.fill();
 
       ctx.strokeStyle = border;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 / zoom;
       ctx.stroke();
 
       // Texte de quantité
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '9px monospace';
+      ctx.font = `${Math.max(6, 9 / zoom)}px monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText(`${Math.round(food.quantity)}`, food.x, food.y - radius - 4);
+      ctx.fillText(`${Math.round(food.quantity)}`, food.x, food.y - radius - 4 / zoom);
     }
-
-    // Retrouver l'agent sélectionné pour les lignes de mémoire
-    const selectedAgent = agents.find(a => a.id === selectedAgentId);
 
     // Dessiner les liaisons de mémoire/connaissances pour l'agent sélectionné
     if (selectedAgent && !selectedAgent.isDead) {
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 4]); // Lignes pointillées
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.setLineDash([4 / zoom, 4 / zoom]); // Pointillés adaptés au zoom
 
       for (const spotId in selectedAgent.knownSpots) {
         const spot = selectedAgent.knownSpots[spotId];
-        let lineColor = 'rgba(148, 163, 184, 0.3)'; // Par défaut gris
+        let lineColor = 'rgba(148, 163, 184, 0.3)';
 
         if (spot.type === 'water') {
-          lineColor = 'rgba(96, 165, 250, 0.5)'; // Bleu pour l'eau
+          lineColor = 'rgba(96, 165, 250, 0.5)';
         } else if (spot.type === 'food') {
           if (spot.status === 'deadly') {
-            lineColor = 'rgba(239, 68, 68, 0.6)'; // Rouge pour mortel
+            lineColor = 'rgba(239, 68, 68, 0.6)';
           } else if (spot.status === 'toxic') {
-            lineColor = 'rgba(245, 158, 11, 0.6)'; // Orange pour toxique
+            lineColor = 'rgba(245, 158, 11, 0.6)';
           } else {
-            lineColor = 'rgba(16, 185, 129, 0.5)'; // Vert pour sain
+            lineColor = 'rgba(16, 185, 129, 0.5)';
           }
         }
 
@@ -169,7 +235,7 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
         ctx.lineTo(spot.x, spot.y);
         ctx.stroke();
       }
-      ctx.setLineDash([]); // Reset les pointillés
+      ctx.setLineDash([]); // Reset
     }
 
     // 3. Dessiner les AGENTS
@@ -177,7 +243,7 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
       const isSelected = agent.id === selectedAgentId;
 
       if (agent.isDead) {
-        // Dessiner le cadavre (fading/tombe)
+        // Dessiner le cadavre
         ctx.fillStyle = 'rgba(100, 116, 139, 0.4)';
         ctx.beginPath();
         ctx.arc(agent.x, agent.y, agent.radius, 0, Math.PI * 2);
@@ -185,7 +251,7 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
 
         // Une petite croix
         ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.5 / zoom;
         ctx.beginPath();
         ctx.moveTo(agent.x - 4, agent.y - 4);
         ctx.lineTo(agent.x + 4, agent.y + 4);
@@ -205,60 +271,49 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
 
       if (shape === 'triangle') {
         ctx.beginPath();
-        // Tip
         ctx.moveTo(agent.x + dx * (agent.radius + 2), agent.y + dy * (agent.radius + 2));
-        // Back left corner
         ctx.lineTo(agent.x - dx * agent.radius * 0.6 + dy * agent.radius * 0.7, agent.y - dy * agent.radius * 0.6 - dx * agent.radius * 0.7);
-        // Back right corner
         ctx.lineTo(agent.x - dx * agent.radius * 0.6 - dy * agent.radius * 0.7, agent.y - dy * agent.radius * 0.6 + dx * agent.radius * 0.7);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = 0.5 / zoom;
         ctx.stroke();
 
-        // Direction nose line
         ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 1.2 / zoom;
         ctx.beginPath();
         ctx.moveTo(agent.x, agent.y);
         ctx.lineTo(agent.x + dx * (agent.radius + 2), agent.y + dy * (agent.radius + 2));
         ctx.stroke();
       } else if (shape === 'square') {
         ctx.beginPath();
-        // Front
         ctx.moveTo(agent.x + dx * agent.radius, agent.y + dy * agent.radius);
-        // Right
         ctx.lineTo(agent.x + dy * agent.radius, agent.y - dx * agent.radius);
-        // Back
         ctx.lineTo(agent.x - dx * agent.radius, agent.y - dy * agent.radius);
-        // Left
         ctx.lineTo(agent.x - dy * agent.radius, agent.y + dx * agent.radius);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = 0.5 / zoom;
         ctx.stroke();
 
-        // Direction nose line
         ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.5 / zoom;
         ctx.beginPath();
         ctx.moveTo(agent.x, agent.y);
         ctx.lineTo(agent.x + dx * (agent.radius + 2), agent.y + dy * (agent.radius + 2));
         ctx.stroke();
       } else {
-        // Circle (default)
         ctx.beginPath();
         ctx.arc(agent.x, agent.y, agent.radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = 0.5 / zoom;
         ctx.stroke();
 
-        // Direction nose line
         ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.5 / zoom;
         ctx.beginPath();
         ctx.moveTo(agent.x, agent.y);
         ctx.lineTo(agent.x + dx * (agent.radius + 2), agent.y + dy * (agent.radius + 2));
@@ -267,25 +322,24 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
 
       // Effet visuel si sélectionné
       if (isSelected) {
-        ctx.strokeStyle = '#f59e0b'; // Anneau doré de sélection
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2 / zoom;
         ctx.beginPath();
-        ctx.arc(agent.x, agent.y, agent.radius + 4, 0, Math.PI * 2);
+        ctx.arc(agent.x, agent.y, agent.radius + 4 / zoom, 0, Math.PI * 2);
         ctx.stroke();
       }
 
       // Indicateurs visuels d'activité (cœur pour s'accoupler, Zzz pour dormir)
       if (agent.state === 'SLEEPING') {
         ctx.fillStyle = '#94a3b8';
-        ctx.font = '8px sans-serif';
+        ctx.font = `${Math.max(5, 8 / zoom)}px sans-serif`;
         ctx.textAlign = 'left';
-        ctx.fillText('Zzz', agent.x + agent.radius + 2, agent.y - 2);
+        ctx.fillText('Zzz', agent.x + agent.radius + 2 / zoom, agent.y - 2 / zoom);
       } else if (agent.state === 'COURTING' && agent.courtshipTargetId) {
-        // Dessiner le lien de couple
         const partner = agents.find(p => p.id === agent.courtshipTargetId);
         if (partner && !partner.isDead) {
-          ctx.strokeStyle = 'rgba(236, 72, 153, 0.2)'; // Rose doux pour l'amour
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(236, 72, 153, 0.2)';
+          ctx.lineWidth = 1 / zoom;
           ctx.beginPath();
           ctx.moveTo(agent.x, agent.y);
           ctx.lineTo(partner.x, partner.y);
@@ -293,37 +347,98 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
         }
         
         ctx.fillStyle = '#ec4899';
-        ctx.font = '8px sans-serif';
-        ctx.fillText('♥', agent.x - 2, agent.y - agent.radius - 2);
+        ctx.font = `${Math.max(5, 8 / zoom)}px sans-serif`;
+        ctx.fillText('♥', agent.x - 2 / zoom, agent.y - agent.radius - 2 / zoom);
       }
     }
-  }, [agents, foodSpots, waterSpots, selectedAgentId]);
+    ctx.restore();
+  }, [agents, foodSpots, waterSpots, selectedAgentId, selectedAgent, zoom, panOffset, followAgent, config]);
 
-  // Clic sur le Canvas pour sélectionner un agent
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
-
-    // Trouver l'agent cliqué le plus proche
-    let clickedAgentId: string | null = null;
-    let minDist = 15; // Rayon max de tolérance du clic
-
-    for (const agent of agents) {
-      const dist = Math.hypot(agent.x - clickX, agent.y - clickY);
-      if (dist < minDist) {
-        minDist = dist;
-        clickedAgentId = agent.id;
-      }
-    }
-
-    setSelectedAgentId(clickedAgentId);
+  // Gestionnaires de souris pour le panoramique (pan) et la sélection
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    panStartRef.current = { x: e.clientX, y: e.clientY };
+    setIsPanning(true);
+    hasPagedRef.current = false;
   };
 
-  const selectedAgent = agents.find(a => a.id === selectedAgentId);
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isPanning) return;
+    const dx = e.clientX - panStartRef.current.x;
+    const dy = e.clientY - panStartRef.current.y;
+    
+    if (Math.hypot(dx, dy) > 3) {
+      hasPagedRef.current = true;
+      
+      if (followAgent && selectedAgent) {
+        // Initialiser panOffset sur la position absolue actuelle de l'agent pour éviter le saut
+        const initialX = selectedAgent.x - config.width / 2;
+        const initialY = selectedAgent.y - config.height / 2;
+        setPanOffset({
+          x: initialX - dx / zoom,
+          y: initialY - dy / zoom
+        });
+        setFollowAgent(false);
+      } else {
+        setPanOffset(prev => ({
+          x: prev.x - dx / zoom,
+          y: prev.y - dy / zoom
+        }));
+      }
+      panStartRef.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    setIsPanning(false);
+    
+    // Si pas de déplacement de caméra significatif, c'est une sélection
+    if (!hasPagedRef.current) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Adapter aux coordonnées internes du canvas
+      const normX = (clickX / rect.width) * canvas.width;
+      const normY = (clickY / rect.height) * canvas.height;
+
+      // Calculer le centre de la caméra
+      const viewCenterX = (followAgent && selectedAgent) ? selectedAgent.x : (config.width / 2 + panOffset.x);
+      const viewCenterY = (followAgent && selectedAgent) ? selectedAgent.y : (config.height / 2 + panOffset.y);
+
+      // Projection inverse (Coordonnées écran -> Coordonnées simulation)
+      const simX = (normX - canvas.width / 2) / zoom + viewCenterX;
+      const simY = (normY - canvas.height / 2) / zoom + viewCenterY;
+
+      // Trouver l'agent cliqué le plus proche
+      let clickedAgentId: string | null = null;
+      let minDist = Math.max(10, 15 / zoom); // Tolérance de clic adaptée au niveau de zoom
+
+      for (const agent of agents) {
+        const dist = Math.hypot(agent.x - simX, agent.y - simY);
+        if (dist < minDist) {
+          minDist = dist;
+          clickedAgentId = agent.id;
+        }
+      }
+
+      if (!clickedAgentId) {
+        // Désélection : Figer la caméra sur la dernière position de l'agent pour éviter le saut
+        if (followAgent && selectedAgent) {
+          setPanOffset({
+            x: selectedAgent.x - config.width / 2,
+            y: selectedAgent.y - config.height / 2
+          });
+        }
+        setSelectedAgentId(null);
+      } else {
+        setSelectedAgentId(clickedAgentId);
+        setFollowAgent(true); // Activer automatiquement le suivi lors de la sélection d'un nouvel agent
+      }
+    }
+  };
   const countLiving = agents.filter(a => !a.isDead).length;
 
   return (
@@ -350,19 +465,155 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
       <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
         {/* Canvas Carré */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', background: 'rgba(15,23,42,0.2)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', justifyContent: 'center', alignItems: 'center' }}>
-          <canvas
-            ref={canvasRef}
-            width={config.width}
-            height={config.height}
-            onClick={handleCanvasClick}
-            style={{
-              borderRadius: 'var(--radius-sm)',
-              boxShadow: 'inset 0 0 100px rgba(0,0,0,0.5)',
-              cursor: 'pointer',
-              maxWidth: '100%',
-              aspectRatio: '1/1'
-            }}
-          />
+          <div style={{ position: 'relative', width: '100%', maxWidth: `${config.width}px` }}>
+            <canvas
+              ref={canvasRef}
+              width={config.width}
+              height={config.height}
+              onMouseDown={handleCanvasMouseDown}
+              onMouseMove={handleCanvasMouseMove}
+              onMouseUp={handleCanvasMouseUp}
+              style={{
+                borderRadius: 'var(--radius-sm)',
+                boxShadow: 'inset 0 0 100px rgba(0,0,0,0.5)',
+                cursor: zoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'pointer',
+                width: '100%',
+                display: 'block',
+                aspectRatio: '1/1'
+              }}
+            />
+
+            {/* Overlay des contrôles de zoom et suivi */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+                background: 'rgba(15, 23, 42, 0.85)',
+                backdropFilter: 'blur(4px)',
+                padding: '6px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-color)',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+                zIndex: 10
+              }}
+            >
+              <button
+                className="btn"
+                title="Zoom Avant"
+                onClick={() => setZoom(z => Math.min(6, z * 1.2))}
+                style={{
+                  padding: '6px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <ZoomIn size={16} />
+              </button>
+              <button
+                className="btn"
+                title="Zoom Arrière"
+                onClick={() => {
+                  setZoom(z => {
+                    const nz = Math.max(1, z / 1.2);
+                    if (nz === 1) setPanOffset({ x: 0, y: 0 });
+                    return nz;
+                  });
+                }}
+                style={{
+                  padding: '6px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <ZoomOut size={16} />
+              </button>
+              <button
+                className="btn"
+                title="Réinitialiser la vue"
+                onClick={() => {
+                  setZoom(1);
+                  setPanOffset({ x: 0, y: 0 });
+                }}
+                style={{
+                  padding: '6px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <Maximize2 size={16} />
+              </button>
+              
+              <div style={{ height: '1px', background: 'var(--border-color)', margin: '2px 0' }} />
+
+              <button
+                className="btn"
+                title={followAgent ? "Suivi de l'agent actif" : "Désactivé : Suivre l'agent"}
+                onClick={() => {
+                  if (followAgent && selectedAgent) {
+                    setPanOffset({
+                      x: selectedAgent.x - config.width / 2,
+                      y: selectedAgent.y - config.height / 2
+                    });
+                  }
+                  setFollowAgent(!followAgent);
+                }}
+                style={{
+                  padding: '6px',
+                  background: followAgent ? 'var(--color-primary)' : 'transparent',
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background 0.2s'
+                }}
+              >
+                <Target size={16} />
+              </button>
+            </div>
+
+            {/* Indicateur de Zoom en bas à gauche */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '12px',
+                left: '12px',
+                background: 'rgba(15, 23, 42, 0.75)',
+                backdropFilter: 'blur(2px)',
+                padding: '4px 8px',
+                borderRadius: '3px',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-secondary)',
+                fontSize: '0.75rem',
+                fontFamily: 'monospace',
+                pointerEvents: 'none',
+                zIndex: 10
+              }}
+            >
+              Zoom: {zoom.toFixed(1)}x
+            </div>
+          </div>
 
           {/* Contrôles temporels */}
           <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>

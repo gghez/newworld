@@ -42,7 +42,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
     {
       id: 'Sapiens (Bleu)',
       color: '#3b82f6',
-      speed: 1.8,
+      speed: 3.6,
       averageLifespan: 120, // 120s
       lifespanFluctuation: 0.15,
       fertilityStartAge: 18,
@@ -52,14 +52,14 @@ export const DEFAULT_CONFIG: SimulationConfig = {
       intelligence: 85,
       initialCount: 15,
       hybridTendency: 0.3,
-      spawnX: 150,
-      spawnY: 150,
+      spawnX: 136,
+      spawnY: 156,
       shape: 'circle'
     },
     {
       id: 'Néandertal (Orange)',
       color: '#f97316',
-      speed: 2.4,
+      speed: 4.8,
       averageLifespan: 80, // 80s
       lifespanFluctuation: 0.1,
       fertilityStartAge: 14,
@@ -77,8 +77,8 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   foodSpots: [
     {
       id: 'food-bush-1',
-      x: 150,
-      y: 150,
+      x: 511,
+      y: 333,
       quantity: 40,
       maxQuantity: 40,
       replenishRate: 0.8,
@@ -90,8 +90,8 @@ export const DEFAULT_CONFIG: SimulationConfig = {
     },
     {
       id: 'food-toxic-berries',
-      x: 450,
-      y: 150,
+      x: 435,
+      y: 157,
       quantity: 30,
       maxQuantity: 30,
       replenishRate: 0.4,
@@ -131,6 +131,14 @@ export const DEFAULT_CONFIG: SimulationConfig = {
       quantity: 60,
       maxQuantity: 60,
       replenishRate: 1.2
+    },
+    {
+      id: 'water-1781650279138-1',
+      x: 494,
+      y: 289,
+      quantity: 50,
+      maxQuantity: 50,
+      replenishRate: 1.0
     }
   ],
   dangerZones: []
@@ -176,7 +184,7 @@ let engineInstance: SimulationEngine | null = null;
 let lastTickHistoryTime = 0;
 
 export const useSimulationStore = create<SimulationState>((set, get) => ({
-  config: getInitialConfig(),
+  config: JSON.parse(JSON.stringify(getInitialConfig())),
   isRunning: false,
   speedMultiplier: 1,
   tickCount: 0,
@@ -188,7 +196,7 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
   history: [],
 
   updateConfig: (updater) => {
-    const newConfig = { ...get().config };
+    const newConfig = JSON.parse(JSON.stringify(get().config)) as SimulationConfig;
     updater(newConfig);
     localStorage.setItem('sim_config', JSON.stringify(newConfig));
     set({ config: newConfig });
@@ -196,8 +204,9 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
   },
 
   loadPreset: (preset) => {
-    localStorage.setItem('sim_config', JSON.stringify(preset));
-    set({ config: preset });
+    const deepCopiedPreset = JSON.parse(JSON.stringify(preset)) as SimulationConfig;
+    localStorage.setItem('sim_config', JSON.stringify(deepCopiedPreset));
+    set({ config: deepCopiedPreset });
     get().reset();
   },
 
