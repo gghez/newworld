@@ -42,7 +42,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
     {
       id: 'Sapiens (Bleu)',
       color: '#3b82f6',
-      speed: 1.8,
+      speed: 3.6,
       averageLifespan: 120, // 120s
       lifespanFluctuation: 0.15,
       fertilityStartAge: 18,
@@ -59,7 +59,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
     {
       id: 'Néandertal (Orange)',
       color: '#f97316',
-      speed: 2.4,
+      speed: 4.8,
       averageLifespan: 80, // 80s
       lifespanFluctuation: 0.1,
       fertilityStartAge: 14,
