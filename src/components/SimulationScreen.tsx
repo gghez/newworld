@@ -351,7 +351,7 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
         ctx.fillText('♥', agent.x - 2 / zoom, agent.y - agent.radius - 2 / zoom);
       }
     }
-
+    ctx.restore();
   }, [agents, foodSpots, waterSpots, selectedAgentId, selectedAgent, zoom, panOffset, followAgent, config]);
 
   // Gestionnaires de souris pour le panoramique (pan) et la sélection
