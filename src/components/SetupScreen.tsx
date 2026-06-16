@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useSimulationStore, DEFAULT_CONFIG } from '../store/simulationStore';
 import { type AgentTypeConfig, type FoodSpot, type WaterSpot } from '../core/types';
 import { Users, Plus, Trash2, Edit2, Sparkles, Compass, MapPin } from 'lucide-react';
@@ -82,6 +82,82 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
   // Pour la mini-carte
   const [editorMode, setEditorMode] = useState<'water' | 'food' | 'eraser' | 'spawn' | 'select'>('food');
   const [hoverCoords, setHoverCoords] = useState<{ x: number; y: number } | null>(null);
+
+  // Pour le drag & drop en mode select (Éditer)
+  const [draggedItem, setDraggedItem] = useState<{ type: 'water' | 'food' | 'spawn'; id: string } | null>(null);
+  const [draggedHasMoved, setDraggedHasMoved] = useState(false);
+  const justDraggedRef = useRef(false);
+  const minimapContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!draggedItem) return;
+
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      if (!minimapContainerRef.current) return;
+      const rect = minimapContainerRef.current.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      
+      const x = Math.max(0, Math.min(config.width, Math.round((clickX / rect.width) * config.width)));
+      const y = Math.max(0, Math.min(config.height, Math.round((clickY / rect.height) * config.height)));
+
+      // Only update if coordinates actually changed
+      let hasChanged = false;
+      if (draggedItem.type === 'water') {
+        const spot = config.waterSpots.find(s => s.id === draggedItem.id);
+        if (spot && (spot.x !== x || spot.y !== y)) hasChanged = true;
+      } else if (draggedItem.type === 'food') {
+        const spot = config.foodSpots.find(s => s.id === draggedItem.id);
+        if (spot && (spot.x !== x || spot.y !== y)) hasChanged = true;
+      } else if (draggedItem.type === 'spawn') {
+        const type = config.agentTypes.find(t => t.id === draggedItem.id);
+        if (type && (type.spawnX !== x || type.spawnY !== y)) hasChanged = true;
+      }
+
+      if (hasChanged) {
+        setDraggedHasMoved(true);
+        updateConfig(conf => {
+          if (draggedItem.type === 'water') {
+            const spot = conf.waterSpots.find(s => s.id === draggedItem.id);
+            if (spot) {
+              spot.x = x;
+              spot.y = y;
+            }
+          } else if (draggedItem.type === 'food') {
+            const spot = conf.foodSpots.find(s => s.id === draggedItem.id);
+            if (spot) {
+              spot.x = x;
+              spot.y = y;
+            }
+          } else if (draggedItem.type === 'spawn') {
+            const type = conf.agentTypes.find(t => t.id === draggedItem.id);
+            if (type) {
+              type.spawnX = x;
+              type.spawnY = y;
+            }
+          }
+        });
+      }
+    };
+
+    const handleWindowMouseUp = () => {
+      if (draggedHasMoved) {
+        justDraggedRef.current = true;
+        setTimeout(() => {
+          justDraggedRef.current = false;
+        }, 50);
+      }
+      setDraggedItem(null);
+      setDraggedHasMoved(false);
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, [draggedItem, draggedHasMoved, config, updateConfig]);
 
   const handleAddAgentType = (e: React.FormEvent) => {
     e.preventDefault();
@@ -372,6 +448,9 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
   };
 
   const handleMinimapClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (justDraggedRef.current) {
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
@@ -638,6 +717,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
 
             {/* La Mini-Carte Interactive */}
             <div
+              ref={minimapContainerRef}
               onMouseMove={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const clickX = e.clientX - rect.left;
@@ -670,67 +750,100 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
               }}
             >
               {/* Rendre les points d'eau existants */}
-              {config.waterSpots.map((spot) => (
-                <div
-                  key={spot.id}
-                  onClick={(e) => {
-                    if (editorMode === 'select') {
-                      e.stopPropagation();
-                      startEditingWaterSpot(spot);
-                    }
-                  }}
-                  style={{
-                    position: 'absolute',
-                    left: `${(spot.x / config.width) * 100}%`,
-                    top: `${(spot.y / config.height) * 100}%`,
-                    width: '12px',
-                    height: '12px',
-                    background: '#3b82f6',
-                    border: '2px solid #fff',
-                    borderRadius: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    boxShadow: '0 0 8px rgba(59, 130, 246, 0.8)',
-                    cursor: editorMode === 'select' ? 'pointer' : undefined,
-                    transition: 'transform 0.15s ease'
-                  }}
-                  className={editorMode === 'select' ? 'interactive-spot' : ''}
-                  title={`Lac (${spot.x}, ${spot.y})${editorMode === 'select' ? ' - Cliquer pour éditer' : ''}`}
-                />
-              ))}
-
-              {/* Rendre les spots de nourriture existants */}
-              {config.foodSpots.map((spot) => {
-                const size = '11px';
-                const pulseClass = spot.isLethal ? 'spot-lethal' : spot.isToxic ? 'spot-toxic' : '';
-                const interactiveClass = editorMode === 'select' ? 'interactive-spot' : '';
-                const displayClass = `${pulseClass} ${interactiveClass}`.trim();
-
+              {config.waterSpots.map((spot) => {
+                const isDragging = draggedItem?.type === 'water' && draggedItem.id === spot.id;
                 return (
                   <div
                     key={spot.id}
+                    onMouseDown={(e) => {
+                      if (editorMode === 'select') {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setDraggedItem({ type: 'water', id: spot.id });
+                        setDraggedHasMoved(false);
+                        justDraggedRef.current = false;
+                      }
+                    }}
                     onClick={(e) => {
                       if (editorMode === 'select') {
                         e.stopPropagation();
-                        startEditingFoodSpot(spot);
+                        if (justDraggedRef.current) return;
+                        startEditingWaterSpot(spot);
                       }
                     }}
                     style={{
                       position: 'absolute',
                       left: `${(spot.x / config.width) * 100}%`,
                       top: `${(spot.y / config.height) * 100}%`,
-                      width: size,
-                      height: size,
-                      background: '#10b981', // Toujours vert pour indiquer la nourriture
-                      border: '2px solid #fff',
+                      width: '20px',
+                      height: '20px',
                       borderRadius: '50%',
                       transform: 'translate(-50%, -50%)',
-                      boxShadow: '0 0 6px #10b981',
-                      cursor: editorMode === 'select' ? 'pointer' : undefined,
-                      transition: 'transform 0.15s ease'
+                      cursor: editorMode === 'select' ? (isDragging ? 'grabbing' : 'grab') : undefined,
+                      transition: isDragging ? 'none' : 'transform 0.15s ease',
+                      zIndex: isDragging ? 10 : 3,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '16px',
+                      userSelect: 'none'
                     }}
-                    className={displayClass || undefined}
-                    title={`Nourriture (${spot.x}, ${spot.y}) - ${spot.isLethal ? 'Mortel' : spot.isToxic ? `Toxique (Malus: ${spot.malusType})` : 'Sain'}${editorMode === 'select' ? ' - Cliquer pour éditer' : ''}`}
+                    className={editorMode === 'select' ? 'interactive-spot' : ''}
+                    title={`Lac (${spot.x}, ${spot.y})${editorMode === 'select' ? ' - Cliquer pour éditer / Glisser pour déplacer' : ''}`}
                   >
+                    💧
+                  </div>
+                );
+              })}
+
+              {/* Rendre les spots de nourriture existants */}
+              {config.foodSpots.map((spot) => {
+                const pulseClass = spot.isLethal ? 'spot-lethal' : spot.isToxic ? 'spot-toxic' : '';
+                const interactiveClass = editorMode === 'select' ? 'interactive-spot' : '';
+                const displayClass = `${pulseClass} ${interactiveClass}`.trim();
+
+                 const isDragging = draggedItem?.type === 'food' && draggedItem.id === spot.id;
+
+                 return (
+                   <div
+                     key={spot.id}
+                     onMouseDown={(e) => {
+                       if (editorMode === 'select') {
+                         e.stopPropagation();
+                         e.preventDefault();
+                         setDraggedItem({ type: 'food', id: spot.id });
+                         setDraggedHasMoved(false);
+                         justDraggedRef.current = false;
+                       }
+                     }}
+                     onClick={(e) => {
+                       if (editorMode === 'select') {
+                         e.stopPropagation();
+                         if (justDraggedRef.current) return;
+                         startEditingFoodSpot(spot);
+                       }
+                     }}
+                     style={{
+                       position: 'absolute',
+                       left: `${(spot.x / config.width) * 100}%`,
+                       top: `${(spot.y / config.height) * 100}%`,
+                       width: '20px',
+                       height: '20px',
+                       borderRadius: '50%',
+                       transform: 'translate(-50%, -50%)',
+                       cursor: editorMode === 'select' ? (isDragging ? 'grabbing' : 'grab') : undefined,
+                       transition: isDragging ? 'none' : 'transform 0.15s ease',
+                       zIndex: isDragging ? 10 : 3,
+                       display: 'flex',
+                       alignItems: 'center',
+                       justifyContent: 'center',
+                       fontSize: '16px',
+                       userSelect: 'none'
+                     }}
+                     className={displayClass || undefined}
+                     title={`Nourriture (${spot.x}, ${spot.y}) - ${spot.isLethal ? 'Mortel' : spot.isToxic ? `Toxique (Malus: ${spot.malusType})` : 'Sain'}${editorMode === 'select' ? ' - Cliquer pour éditer / Glisser pour déplacer' : ''}`}
+                   >
+                     🍏
                     {spot.isLethal && (
                       <div style={{
                         position: 'absolute',
@@ -776,6 +889,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
               {/* Rendre les spawn points des types déjà existants */}
               {config.agentTypes.map((type) => {
                 const isSelected = currentTarget === type.id && editorMode === 'spawn';
+                const isDragging = draggedItem?.type === 'spawn' && draggedItem.id === type.id;
                 const individualOffsets = [
                   { angle: 0, xOffset: 26, yOffset: 0 },
                   { angle: (2 * Math.PI) / 3, xOffset: -13, yOffset: 23 },
@@ -785,6 +899,20 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
                 return (
                   <React.Fragment key={`spawn-group-${type.id}`}>
                     <div
+                      onMouseDown={(e) => {
+                        if (editorMode === 'select') {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setDraggedItem({ type: 'spawn', id: type.id });
+                          setDraggedHasMoved(false);
+                          justDraggedRef.current = false;
+                        }
+                      }}
+                      onClick={(e) => {
+                        if (editorMode === 'select') {
+                          e.stopPropagation();
+                        }
+                      }}
                       style={{
                         position: 'absolute',
                         left: `${(type.spawnX / config.width) * 100}%`,
@@ -799,10 +927,11 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
                         justifyContent: 'center',
                         boxShadow: isSelected ? `0 0 10px ${type.color}` : `0 0 6px ${type.color}`,
                         background: 'rgba(15, 23, 42, 0.6)',
-                        transition: 'all 0.2s ease-in-out',
-                        zIndex: 4
+                        transition: isDragging ? 'none' : 'all 0.2s ease-in-out',
+                        zIndex: isDragging ? 10 : 4,
+                        cursor: editorMode === 'select' ? (isDragging ? 'grabbing' : 'grab') : undefined
                       }}
-                      title={`Spawn ${type.id} (${type.spawnX}, ${type.spawnY})`}
+                      title={`Spawn ${type.id} (${type.spawnX}, ${type.spawnY})${editorMode === 'select' ? ' - Glisser pour déplacer' : ''}`}
                     >
                       <span style={{ fontSize: isSelected ? '10px' : '8px', color: type.color, fontWeight: 'bold' }}>
                         {isSelected ? '★' : 'S'}
@@ -827,26 +956,27 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
                             height: '14px',
                             transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
                             pointerEvents: 'none',
-                            zIndex: 5
+                            zIndex: 5,
+                            transition: isDragging ? 'none' : undefined
                           }}
                           title={`Individu prévis. - ${type.id} (${shape})`}
                         >
                           <svg width="14" height="14" viewBox="0 0 14 14" style={{ display: 'block' }}>
                             {shape === 'triangle' ? (
-                              <>
-                                <polygon points="12,7 3,3 3,11" fill={type.color} stroke="#fff" strokeWidth="0.8" />
-                                <line x1="7" y1="7" x2="12" y2="7" stroke="#0f172a" strokeWidth="1" />
-                              </>
+                               <>
+                                 <polygon points="12,7 3,3 3,11" fill={type.color} stroke="#fff" strokeWidth="0.8" />
+                                 <line x1="7" y1="7" x2="12" y2="7" stroke="#0f172a" strokeWidth="1" />
+                               </>
                             ) : shape === 'square' ? (
-                              <>
-                                <polygon points="11,7 7,3 3,7 7,11" fill={type.color} stroke="#fff" strokeWidth="0.8" />
-                                <line x1="7" y1="7" x2="11" y2="7" stroke="#0f172a" strokeWidth="1.2" />
-                              </>
+                               <>
+                                 <polygon points="11,7 7,3 3,7 7,11" fill={type.color} stroke="#fff" strokeWidth="0.8" />
+                                 <line x1="7" y1="7" x2="11" y2="7" stroke="#0f172a" strokeWidth="1.2" />
+                               </>
                             ) : (
-                              <>
-                                <circle cx="7" cy="7" r="4.5" fill={type.color} stroke="#fff" strokeWidth="0.8" />
-                                <line x1="7" y1="7" x2="11.5" y2="7" stroke="#0f172a" strokeWidth="1.2" />
-                              </>
+                               <>
+                                 <circle cx="7" cy="7" r="4.5" fill={type.color} stroke="#fff" strokeWidth="0.8" />
+                                 <line x1="7" y1="7" x2="11.5" y2="7" stroke="#0f172a" strokeWidth="1.2" />
+                               </>
                             )}
                           </svg>
                         </div>
@@ -875,25 +1005,16 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartSimulation }) =
           backdrop-filter: blur(8px) !important;
         }
         .interactive-spot:hover {
-          transform: translate(-50%, -50%) scale(1.4) !important;
-          box-shadow: 0 0 12px #fff !important;
+          transform: translate(-50%, -50%) scale(1.3) !important;
           z-index: 10;
         }
-        @keyframes toxic-pulse {
-          0% { box-shadow: 0 0 4px #10b981; }
-          50% { box-shadow: 0 0 12px #f59e0b; }
-          100% { box-shadow: 0 0 4px #10b981; }
+        @keyframes emoji-pulse {
+          0% { transform: translate(-50%, -50%) scale(1); }
+          50% { transform: translate(-50%, -50%) scale(1.15); }
+          100% { transform: translate(-50%, -50%) scale(1); }
         }
-        @keyframes lethal-pulse {
-          0% { box-shadow: 0 0 4px #10b981; transform: translate(-50%, -50%) scale(1); }
-          50% { box-shadow: 0 0 14px #ef4444; transform: translate(-50%, -50%) scale(1.15); }
-          100% { box-shadow: 0 0 4px #10b981; transform: translate(-50%, -50%) scale(1); }
-        }
-        .spot-toxic {
-          animation: toxic-pulse 2s infinite ease-in-out;
-        }
-        .spot-lethal {
-          animation: lethal-pulse 1.5s infinite ease-in-out;
+        .spot-toxic, .spot-lethal {
+          animation: emoji-pulse 1.5s infinite ease-in-out;
         }
       `}</style>
 
