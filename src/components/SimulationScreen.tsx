@@ -35,6 +35,28 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
     setSelectedAgentId
   } = useSimulationStore();
 
+  const selectedAgent = agents.find(a => a.id === selectedAgentId);
+
+  // S'assurer que si l'agent suivi meurt, disparaît ou est désélectionné sans interaction,
+  // on fige la caméra sur sa dernière position connue
+  const prevSelectedAgentRef = useRef<{ x: number, y: number } | null>(null);
+
+  useEffect(() => {
+    if (selectedAgent) {
+      prevSelectedAgentRef.current = { x: selectedAgent.x, y: selectedAgent.y };
+    }
+  }, [selectedAgent]);
+
+  useEffect(() => {
+    if (followAgent && !selectedAgent && prevSelectedAgentRef.current) {
+      setPanOffset({
+        x: prevSelectedAgentRef.current.x - config.width / 2,
+        y: prevSelectedAgentRef.current.y - config.height / 2
+      });
+      setFollowAgent(false);
+    }
+  }, [selectedAgent, followAgent, config.width, config.height]);
+
   // Boucle d'animation principale (requestAnimationFrame)
   useEffect(() => {
     let lastTime = performance.now();
@@ -96,12 +118,9 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
     ctx.fillStyle = '#0f172a'; // Deep background slate
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Retrouver l'agent sélectionné
-    const selectedAgent = agents.find(a => a.id === selectedAgentId);
-
     // Calculer le centre de la caméra (viewCenter)
-    const viewCenterX = (followAgent && selectedAgent && !selectedAgent.isDead) ? selectedAgent.x : (config.width / 2 + panOffset.x);
-    const viewCenterY = (followAgent && selectedAgent && !selectedAgent.isDead) ? selectedAgent.y : (config.height / 2 + panOffset.y);
+    const viewCenterX = (followAgent && selectedAgent) ? selectedAgent.x : (config.width / 2 + panOffset.x);
+    const viewCenterY = (followAgent && selectedAgent) ? selectedAgent.y : (config.height / 2 + panOffset.y);
 
     ctx.save();
 
@@ -333,7 +352,7 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
       }
     }
 
-  }, [agents, foodSpots, waterSpots, selectedAgentId, zoom, panOffset, followAgent, config]);
+  }, [agents, foodSpots, waterSpots, selectedAgentId, selectedAgent, zoom, panOffset, followAgent, config]);
 
   // Gestionnaires de souris pour le panoramique (pan) et la sélection
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -349,11 +368,22 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
     
     if (Math.hypot(dx, dy) > 3) {
       hasPagedRef.current = true;
-      setFollowAgent(false); // Désactive le suivi automatique lors d'un déplacement manuel
-      setPanOffset(prev => ({
-        x: prev.x - dx / zoom,
-        y: prev.y - dy / zoom
-      }));
+      
+      if (followAgent && selectedAgent) {
+        // Initialiser panOffset sur la position absolue actuelle de l'agent pour éviter le saut
+        const initialX = selectedAgent.x - config.width / 2;
+        const initialY = selectedAgent.y - config.height / 2;
+        setPanOffset({
+          x: initialX - dx / zoom,
+          y: initialY - dy / zoom
+        });
+        setFollowAgent(false);
+      } else {
+        setPanOffset(prev => ({
+          x: prev.x - dx / zoom,
+          y: prev.y - dy / zoom
+        }));
+      }
       panStartRef.current = { x: e.clientX, y: e.clientY };
     }
   };
@@ -375,9 +405,8 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
       const normY = (clickY / rect.height) * canvas.height;
 
       // Calculer le centre de la caméra
-      const selectedAgent = agents.find(a => a.id === selectedAgentId);
-      const viewCenterX = (followAgent && selectedAgent && !selectedAgent.isDead) ? selectedAgent.x : (config.width / 2 + panOffset.x);
-      const viewCenterY = (followAgent && selectedAgent && !selectedAgent.isDead) ? selectedAgent.y : (config.height / 2 + panOffset.y);
+      const viewCenterX = (followAgent && selectedAgent) ? selectedAgent.x : (config.width / 2 + panOffset.x);
+      const viewCenterY = (followAgent && selectedAgent) ? selectedAgent.y : (config.height / 2 + panOffset.y);
 
       // Projection inverse (Coordonnées écran -> Coordonnées simulation)
       const simX = (normX - canvas.width / 2) / zoom + viewCenterX;
@@ -395,11 +424,21 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
         }
       }
 
-      setSelectedAgentId(clickedAgentId);
+      if (!clickedAgentId) {
+        // Désélection : Figer la caméra sur la dernière position de l'agent pour éviter le saut
+        if (followAgent && selectedAgent) {
+          setPanOffset({
+            x: selectedAgent.x - config.width / 2,
+            y: selectedAgent.y - config.height / 2
+          });
+        }
+        setSelectedAgentId(null);
+      } else {
+        setSelectedAgentId(clickedAgentId);
+        setFollowAgent(true); // Activer automatiquement le suivi lors de la sélection d'un nouvel agent
+      }
     }
   };
-
-  const selectedAgent = agents.find(a => a.id === selectedAgentId);
   const countLiving = agents.filter(a => !a.isDead).length;
 
   return (
@@ -528,7 +567,15 @@ export const SimulationScreen: React.FC<SimulationScreenProps> = ({ onBackToSetu
               <button
                 className="btn"
                 title={followAgent ? "Suivi de l'agent actif" : "Désactivé : Suivre l'agent"}
-                onClick={() => setFollowAgent(!followAgent)}
+                onClick={() => {
+                  if (followAgent && selectedAgent) {
+                    setPanOffset({
+                      x: selectedAgent.x - config.width / 2,
+                      y: selectedAgent.y - config.height / 2
+                    });
+                  }
+                  setFollowAgent(!followAgent);
+                }}
                 style={{
                   padding: '6px',
                   background: followAgent ? 'var(--color-primary)' : 'transparent',
