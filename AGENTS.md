@@ -51,6 +51,7 @@ Le code doit être structuré de manière modulaire pour séparer la simulation 
 2. **Types TypeScript :** Utilisez un typage fort pour toutes les entités (agents, nourriture, eau, configuration). Utilisez des imports de types séparés (`import type { ... }`) conformément aux règles `verbatimModuleSyntax`.
 3. **Mise à jour de la documentation (Règle Projet) :** Chaque fois qu'une règle ou mécanique du jeu change, mettez immédiatement à jour le document de description **[docs/game_description.md](docs/game_description.md)** pour que la spécification reste synchronisée.
 4. **Pas de chemins absolus :** N'insérez jamais de chemins absolus (ex: `C:/Users/...` ou `file:///C:...`) dans les fichiers d'instruction, de documentation ou de code. Utilisez exclusivement des chemins d'accès relatifs.
+5. **Git Worktree Sync :** When starting work in a git worktree, ensure it is fully up-to-date with origin/main (fetch origin and rebase your active branch on origin/main before making any edits).
 
 ---
 
